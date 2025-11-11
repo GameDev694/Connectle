@@ -1,0 +1,6 @@
+@Connectle_HostAddress = http://localhost:5243
+
+GET {{Connectle_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -1,0 +1,10 @@
+﻿services:
+  - type: web
+    name: connectle-chat
+    env: dotnet
+    plan: free
+    buildCommand: cd Connectle.Server && dotnet publish -c Release -o output
+    startCommand: cd Connectle.Server/output && ./Connectle.Server
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
