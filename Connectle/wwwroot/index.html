@@ -1,405 +1,105 @@
-﻿<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Connectle - Умный модульный мессенджер</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
+﻿<script>
+    // Автоматически определяем адрес сервера
+    const serverUrl = window.location.origin;
+    console.log("Server URL:", serverUrl);
+    
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl(serverUrl + "/chatHub")
+        .configureLogging(signalR.LogLevel.Information)
+        .build();
 
-        .container {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-
-        h1 {
-            color: #2c3e50;
-            text-align: center;
-            margin-bottom: 10px;
-        }
-
-        .subtitle {
-            text-align: center;
-            color: #7f8c8d;
-            margin-bottom: 25px;
-            font-size: 1.1em;
-        }
-
-        .chat-container {
-            border: 2px solid #e0e0e0;
-            border-radius: 12px;
-            margin: 20px 0;
-            overflow: hidden;
-        }
-
-        #messages {
-            height: 450px;
-            overflow-y: auto;
-            padding: 20px;
-            background: #f8f9fa;
-        }
-
-        .message {
-            margin-bottom: 18px;
-            padding: 15px;
-            background: white;
-            border-radius: 10px;
-            border-left: 4px solid #3498db;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-
-            .message.system {
-                border-left-color: #9b59b6;
-                background: #f3e5f5;
-            }
-
-            .message.bot {
-                border-left-color: #2ecc71;
-                background: #e8f6f3;
-            }
-
-        .user {
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 5px;
-        }
-
-        .message-text {
-            margin: 8px 0;
-            line-height: 1.4;
-        }
-
-        .time {
-            font-size: 12px;
-            color: #7f8c8d;
-            text-align: right;
-        }
-
-        .input-container {
-            display: flex;
-            padding: 20px;
-            border-top: 1px solid #e0e0e0;
-            background: white;
-            gap: 12px;
-        }
-
-        #messageInput {
-            flex: 1;
-            padding: 15px;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-
-            #messageInput:focus {
-                outline: none;
-                border-color: #3498db;
-            }
-
-        button {
-            padding: 15px 25px;
-            background: #3498db;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: background 0.3s;
-        }
-
-            button:hover {
-                background: #2980b9;
-            }
-
-            button:disabled {
-                background: #bdc3c7;
-                cursor: not-allowed;
-            }
-
-        .status {
-            text-align: center;
-            padding: 12px;
-            margin: 15px 0;
-            border-radius: 8px;
-            font-weight: bold;
-        }
-
-            .status.connected {
-                background: #d4edda;
-                color: #155724;
-                border: 1px solid #c3e6cb;
-            }
-
-            .status.disconnected {
-                background: #f8d7da;
-                color: #721c24;
-                border: 1px solid #f5c6cb;
-            }
-
-        .plugins {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 12px;
-            margin: 20px 0;
-        }
-
-        .plugin-btn {
-            padding: 12px 15px;
-            background: #9b59b6;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.3s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-            .plugin-btn:hover {
-                background: #8e44ad;
-                transform: translateY(-2px);
-            }
-
-            .plugin-btn.weather {
-                background: #3498db;
-            }
-
-            .plugin-btn.calc {
-                background: #e74c3c;
-            }
-
-            .plugin-btn.joke {
-                background: #f39c12;
-            }
-
-            .plugin-btn.time {
-                background: #27ae60;
-            }
-
-            .plugin-btn.rate {
-                background: #2c3e50;
-            }
-
-            .plugin-btn.help {
-                background: #7f8c8d;
-            }
-
-        .footer {
-            text-align: center;
-            color: #7f8c8d;
-            margin-top: 25px;
-            padding-top: 20px;
-            border-top: 1px solid #ecf0f1;
-        }
-
-        /* Анимации */
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .message {
-            animation: fadeIn 0.3s ease-out;
-        }
-
-        /* Полоса прокрутки */
-        #messages::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        #messages::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 3px;
-        }
-
-        #messages::-webkit-scrollbar-thumb {
-            background: #c1c1c1;
-            border-radius: 3px;
-        }
-
-            #messages::-webkit-scrollbar-thumb:hover {
-                background: #a8a8a8;
-            }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🧩 Connectle</h1>
-        <div class="subtitle">Умный мессенджер с модулями</div>
-
-        <div id="status" class="status disconnected">
-            ❌ Не подключено к серверу
-        </div>
-
-        <div class="plugins">
-            <button class="plugin-btn weather" onclick="sendCommand('/погода Москва')">
-                🌤️ Погода
-            </button>
-            <button class="plugin-btn calc" onclick="sendCommand('/calc 15+27')">
-                🧮 Калькулятор
-            </button>
-            <button class="plugin-btn joke" onclick="sendCommand('/шутка')">
-                😂 Шутка
-            </button>
-            <button class="plugin-btn time" onclick="sendCommand('/время')">
-                ⏰ Время
-            </button>
-            <button class="plugin-btn rate" onclick="sendCommand('/курс')">
-                💵 Курс валют
-            </button>
-            <button class="plugin-btn help" onclick="sendCommand('/помощь')">
-                ❓ Помощь
-            </button>
-        </div>
-
-        <div class="chat-container">
-            <div id="messages">
-                <div class="message system">
-                    <div class="user">🤖 Система:</div>
-                    <div class="message-text">Загрузка чата... Подключаемся к серверу</div>
-                    <div class="time" id="connectionTime"></div>
-                </div>
-            </div>
-
-            <div class="input-container">
-                <input type="text" id="messageInput" placeholder="Введите сообщение или команду (/помощь)" disabled>
-                <button onclick="sendMessage()" disabled id="sendButton">Отправить</button>
-            </div>
-        </div>
-
-        <div class="footer">
-            💡 Откройте эту страницу в двух окнах браузера для тестирования чата
-        </div>
-    </div>
-
-    <!-- Подключаем библиотеку SignalR -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.min.js"></script>
-
-    <script>
-        // Подключаемся к нашему серверу
-        const connection = new signalR.HubConnectionBuilder()
-            .withUrl("http://localhost:5000/chatHub")
-            .build();
-
-        // Когда получаем историю сообщений
-        connection.on("ReceiveMessageHistory", (messages) => {
-            console.log("Получили историю:", messages);
-
-            const messagesDiv = document.getElementById("messages");
-            messagesDiv.innerHTML = '';
-
-            // Показываем все сообщения из истории
-            messages.forEach(msg => {
-                addMessageToChat(msg.user, msg.text, msg.timestamp);
-            });
-
-            // Добавляем приветственное сообщение
-            addMessageToChat("🤖 Система", "Добро пожаловать в Connectle! Используйте кнопки модулей или напишите /помощь для списка команд.", new Date());
+    // Когда получаем историю сообщений
+    connection.on("ReceiveMessageHistory", (messages) => {
+        console.log("Получили историю:", messages);
+        
+        const messagesDiv = document.getElementById("messages");
+        messagesDiv.innerHTML = '';
+        
+        messages.forEach(msg => {
+            addMessageToChat(msg.user, msg.text, msg.timestamp);
         });
+        
+        addMessageToChat("🤖 Система", "Добро пожаловать в Connectle! Используйте кнопки модулей.", new Date());
+    });
 
-        // Когда получаем новое сообщение
-        connection.on("ReceiveMessage", (user, text, timestamp) => {
-            addMessageToChat(user, text, timestamp);
-        });
+    // Когда получаем новое сообщение
+    connection.on("ReceiveMessage", (user, text, timestamp) => {
+        addMessageToChat(user, text, timestamp);
+    });
 
-        // Функция отправки сообщения
-        function sendMessage() {
-            const input = document.getElementById("messageInput");
-            const message = input.value.trim();
-
-            if (message) {
-                // Отправляем сообщение на сервер
-                connection.invoke("SendMessage", "Вы", message)
-                    .catch(err => console.error("Ошибка отправки:", err));
-
-                input.value = ""; // Очищаем поле ввода
-            }
+    // Функция отправки сообщения
+    function sendMessage() {
+        const input = document.getElementById("messageInput");
+        const message = input.value.trim();
+        
+        if (message) {
+            connection.invoke("SendMessage", "Вы", message)
+                .catch(err => console.error("Ошибка отправки:", err));
+            
+            input.value = "";
         }
+    }
 
-        // Функция отправки команды
-        function sendCommand(command) {
-            connection.invoke("SendMessage", "Вы", command)
-                .catch(err => console.error("Ошибка команды:", err));
+    // Функция отправки команды
+    function sendCommand(command) {
+        connection.invoke("SendMessage", "Вы", command)
+            .catch(err => console.error("Ошибка команды:", err));
+    }
+
+    // Функция добавления сообщения в чат
+    function addMessageToChat(user, text, timestamp) {
+        const messagesDiv = document.getElementById("messages");
+        const messageDiv = document.createElement("div");
+        
+        const time = new Date(timestamp).toLocaleTimeString();
+        
+        let messageClass = "message";
+        if (user === "🤖 Система") {
+            messageClass += " bot";
+        } else if (user === "Система") {
+            messageClass += " system";
         }
+        
+        messageDiv.className = messageClass;
+        messageDiv.innerHTML = `
+            <div class="user">${user}:</div>
+            <div class="message-text">${text}</div>
+            <div class="time">${time}</div>
+        `;
+        
+        messagesDiv.appendChild(messageDiv);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
 
-        // Функция добавления сообщения в чат
-        function addMessageToChat(user, text, timestamp) {
-            const messagesDiv = document.getElementById("messages");
-            const messageDiv = document.createElement("div");
-
-            const time = new Date(timestamp).toLocaleTimeString();
-
-            // Определяем класс сообщения
-            let messageClass = "message";
-            if (user === "🤖 Система") {
-                messageClass += " bot";
-            } else if (user === "Система") {
-                messageClass += " system";
-            }
-
-            messageDiv.className = messageClass;
-            messageDiv.innerHTML = `
-                    <div class="user">${user}:</div>
-                    <div class="message-text">${text}</div>
-                    <div class="time">${time}</div>
-                `;
-
-            messagesDiv.appendChild(messageDiv);
-            // Прокручиваем вниз
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    // Обработка нажатия Enter
+    document.getElementById("messageInput").addEventListener("keypress", function(e) {
+        if (e.key === "Enter") {
+            sendMessage();
         }
+    });
 
-        // Обработка нажатия Enter
-        document.getElementById("messageInput").addEventListener("keypress", function (e) {
-            if (e.key === "Enter") {
-                sendMessage();
-            }
-        });
+    // Обновляем статус подключения
+    connection.onclose(() => {
+        document.getElementById("status").className = "status disconnected";
+        document.getElementById("status").innerHTML = "❌ Не подключено к серверу";
+        document.getElementById("messageInput").disabled = true;
+        document.getElementById("sendButton").disabled = true;
+    });
 
-        // Обновляем статус подключения
-        connection.onclose(() => {
+    // Запускаем подключение
+    connection.start()
+        .then(() => {
+            console.log("Подключение установлено!");
+            document.getElementById("status").className = "status connected";
+            document.getElementById("status").innerHTML = "✅ Подключено к серверу Connectle";
+            document.getElementById("connectionTime").textContent = new Date().toLocaleTimeString();
+            document.getElementById("messageInput").disabled = false;
+            document.getElementById("sendButton").disabled = false;
+            document.getElementById("messageInput").focus();
+        })
+        .catch(err => {
+            console.error("Ошибка подключения:", err);
             document.getElementById("status").className = "status disconnected";
-            document.getElementById("status").innerHTML = "❌ Не подключено к серверу";
-            document.getElementById("messageInput").disabled = true;
-            document.getElementById("sendButton").disabled = true;
+            document.getElementById("status").innerHTML = "❌ Ошибка подключения: " + err;
         });
-
-        // Запускаем подключение
-        connection.start()
-            .then(() => {
-                console.log("Подключение установлено!");
-                document.getElementById("status").className = "status connected";
-                document.getElementById("status").innerHTML = "✅ Подключено к серверу Connectle";
-                document.getElementById("connectionTime").textContent = new Date().toLocaleTimeString();
-                document.getElementById("messageInput").disabled = false;
-                document.getElementById("sendButton").disabled = false;
-                document.getElementById("messageInput").focus();
-            })
-            .catch(err => {
-                console.error("Ошибка подключения:", err);
-                document.getElementById("status").className = "status disconnected";
-                document.getElementById("status").innerHTML = "❌ Ошибка подключения: " + err;
-            });
-    </script>
-</body>
-</html>
+</script>
