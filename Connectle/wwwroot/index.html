@@ -1,105 +1,72 @@
-﻿<script>
-    // Автоматически определяем адрес сервера
-    const serverUrl = window.location.origin;
-    console.log("Server URL:", serverUrl);
-    
-    const connection = new signalR.HubConnectionBuilder()
-        .withUrl(serverUrl + "/chatHub")
-        .configureLogging(signalR.LogLevel.Information)
-        .build();
+﻿<script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@6.0.0/dist/browser/signalr.min.js"></script>
+<script>
+    // Ждем немного для загрузки SignalR
+    setTimeout(() => {
+        if (typeof signalR === 'undefined') {
+            document.getElementById("status").textContent = "❌ SignalR не загружен - пробуем другой CDN";
+            // Пробуем запасной CDN
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/@microsoft/signalr@6.0.0/dist/browser/signalr.min.js';
+            script.onload = initChat;
+            document.head.appendChild(script);
+        } else {
+            initChat();
+        }
+    }, 100);
 
-    // Когда получаем историю сообщений
-    connection.on("ReceiveMessageHistory", (messages) => {
-        console.log("Получили историю:", messages);
+    function initChat() {
+        console.log("✅ SignalR загружен");
         
-        const messagesDiv = document.getElementById("messages");
-        messagesDiv.innerHTML = '';
-        
-        messages.forEach(msg => {
-            addMessageToChat(msg.user, msg.text, msg.timestamp);
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/chatHub")
+            .build();
+
+        connection.on("ReceiveMessageHistory", (messages) => {
+            console.log("История:", messages);
+            const messagesDiv = document.getElementById("messages");
+            messagesDiv.innerHTML = '';
+            messages.forEach(msg => addMessageToChat(msg.user, msg.text, msg.timestamp));
+            addMessageToChat("🤖 Система", "Добро пожаловать!", new Date());
         });
-        
-        addMessageToChat("🤖 Система", "Добро пожаловать в Connectle! Используйте кнопки модулей.", new Date());
-    });
 
-    // Когда получаем новое сообщение
-    connection.on("ReceiveMessage", (user, text, timestamp) => {
-        addMessageToChat(user, text, timestamp);
-    });
-
-    // Функция отправки сообщения
-    function sendMessage() {
-        const input = document.getElementById("messageInput");
-        const message = input.value.trim();
-        
-        if (message) {
-            connection.invoke("SendMessage", "Вы", message)
-                .catch(err => console.error("Ошибка отправки:", err));
-            
-            input.value = "";
-        }
-    }
-
-    // Функция отправки команды
-    function sendCommand(command) {
-        connection.invoke("SendMessage", "Вы", command)
-            .catch(err => console.error("Ошибка команды:", err));
-    }
-
-    // Функция добавления сообщения в чат
-    function addMessageToChat(user, text, timestamp) {
-        const messagesDiv = document.getElementById("messages");
-        const messageDiv = document.createElement("div");
-        
-        const time = new Date(timestamp).toLocaleTimeString();
-        
-        let messageClass = "message";
-        if (user === "🤖 Система") {
-            messageClass += " bot";
-        } else if (user === "Система") {
-            messageClass += " system";
-        }
-        
-        messageDiv.className = messageClass;
-        messageDiv.innerHTML = `
-            <div class="user">${user}:</div>
-            <div class="message-text">${text}</div>
-            <div class="time">${time}</div>
-        `;
-        
-        messagesDiv.appendChild(messageDiv);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
-
-    // Обработка нажатия Enter
-    document.getElementById("messageInput").addEventListener("keypress", function(e) {
-        if (e.key === "Enter") {
-            sendMessage();
-        }
-    });
-
-    // Обновляем статус подключения
-    connection.onclose(() => {
-        document.getElementById("status").className = "status disconnected";
-        document.getElementById("status").innerHTML = "❌ Не подключено к серверу";
-        document.getElementById("messageInput").disabled = true;
-        document.getElementById("sendButton").disabled = true;
-    });
-
-    // Запускаем подключение
-    connection.start()
-        .then(() => {
-            console.log("Подключение установлено!");
-            document.getElementById("status").className = "status connected";
-            document.getElementById("status").innerHTML = "✅ Подключено к серверу Connectle";
-            document.getElementById("connectionTime").textContent = new Date().toLocaleTimeString();
-            document.getElementById("messageInput").disabled = false;
-            document.getElementById("sendButton").disabled = false;
-            document.getElementById("messageInput").focus();
-        })
-        .catch(err => {
-            console.error("Ошибка подключения:", err);
-            document.getElementById("status").className = "status disconnected";
-            document.getElementById("status").innerHTML = "❌ Ошибка подключения: " + err;
+        connection.on("ReceiveMessage", (user, text, timestamp) => {
+            addMessageToChat(user, text, timestamp);
         });
+
+        function sendMessage() {
+            const input = document.getElementById("messageInput");
+            const message = input.value.trim();
+            if (message) {
+                connection.invoke("SendMessage", "Вы", message).catch(console.error);
+                input.value = "";
+            }
+        }
+
+        function sendCommand(command) {
+            connection.invoke("SendMessage", "Вы", command).catch(console.error);
+        }
+
+        function addMessageToChat(user, text, timestamp) {
+            const messagesDiv = document.getElementById("messages");
+            const messageDiv = document.createElement("div");
+            messageDiv.className = user.includes("Система") ? "message system" : "message";
+            messageDiv.innerHTML = `<strong>${user}:</strong> ${text} <small>${new Date(timestamp).toLocaleTimeString()}</small>`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        document.getElementById("messageInput").addEventListener("keypress", e => {
+            if (e.key === "Enter") sendMessage();
+        });
+
+        connection.start()
+            .then(() => {
+                document.getElementById("status").textContent = "✅ Подключено!";
+                document.getElementById("messageInput").disabled = false;
+                document.getElementById("sendButton").disabled = false;
+            })
+            .catch(err => {
+                document.getElementById("status").textContent = "❌ Ошибка: " + err;
+            });
+    }
 </script>
