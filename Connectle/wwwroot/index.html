@@ -1,72 +1,413 @@
-﻿<script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@6.0.0/dist/browser/signalr.min.js"></script>
-<script>
-    // Ждем немного для загрузки SignalR
-    setTimeout(() => {
-        if (typeof signalR === 'undefined') {
-            document.getElementById("status").textContent = "❌ SignalR не загружен - пробуем другой CDN";
-            // Пробуем запасной CDN
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/@microsoft/signalr@6.0.0/dist/browser/signalr.min.js';
-            script.onload = initChat;
-            document.head.appendChild(script);
-        } else {
-            initChat();
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connectle - Умный мессенджер</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-    }, 100);
 
-    function initChat() {
-        console.log("✅ SignalR загружен");
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .logo {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            color: #7f8c8d;
+            font-size: 1.2em;
+        }
+
+        .status {
+            text-align: center;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .plugins {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin: 20px 0;
+        }
+
+        .plugin-btn {
+            padding: 12px 15px;
+            background: #9b59b6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .plugin-btn:hover {
+            background: #8e44ad;
+            transform: translateY(-2px);
+        }
+
+        .plugin-btn.weather { background: #3498db; }
+        .plugin-btn.calc { background: #e74c3c; }
+        .plugin-btn.joke { background: #f39c12; }
+        .plugin-btn.time { background: #27ae60; }
+        .plugin-btn.rate { background: #2c3e50; }
+        .plugin-btn.help { background: #7f8c8d; }
+
+        .chat-container {
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+
+        #messages {
+            height: 400px;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border-left: 4px solid #3498db;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .message.system {
+            border-left-color: #9b59b6;
+            background: #f3e5f5;
+        }
+
+        .user {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .message-text {
+            margin: 8px 0;
+            line-height: 1.4;
+        }
+
+        .time {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-align: right;
+        }
+
+        .input-container {
+            display: flex;
+            padding: 20px;
+            border-top: 1px solid #e0e0e0;
+            background: white;
+            gap: 12px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        #messageInput:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        #sendButton {
+            padding: 15px 25px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+
+        #sendButton:hover {
+            background: #2980b9;
+        }
+
+        #sendButton:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .footer {
+            text-align: center;
+            color: #7f8c8d;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #ecf0f1;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Полоса прокрутки */
+        #messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        #messages::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        #messages::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🧩 Connectle</div>
+            <div class="tagline">Умный мессенджер с модулями</div>
+        </div>
         
-        const connection = new signalR.HubConnectionBuilder()
-            .withUrl("/chatHub")
-            .build();
+        <div id="status" class="status disconnected">
+            ❌ Не подключено к серверу
+        </div>
+        
+        <div class="plugins">
+            <button class="plugin-btn weather" data-command="/погода Москва">
+                🌤️ Погода
+            </button>
+            <button class="plugin-btn calc" data-command="/calc 15+27">
+                🧮 Калькулятор
+            </button>
+            <button class="plugin-btn joke" data-command="/шутка">
+                😂 Шутка
+            </button>
+            <button class="plugin-btn time" data-command="/время">
+                ⏰ Время
+            </button>
+            <button class="plugin-btn rate" data-command="/курс">
+                💵 Курс валют
+            </button>
+            <button class="plugin-btn help" data-command="/помощь">
+                ❓ Помощь
+            </button>
+        </div>
+        
+        <div class="chat-container">
+            <div id="messages">
+                <div class="message system">
+                    <div class="user">🤖 Система:</div>
+                    <div class="message-text">Загрузка чата...</div>
+                    <div class="time" id="connectionTime"></div>
+                </div>
+            </div>
+            
+            <div class="input-container">
+                <input type="text" id="messageInput" placeholder="Введите сообщение или команду (/помощь)" disabled>
+                <button id="sendButton" disabled>Отправить</button>
+            </div>
+        </div>
+        
+        <div class="footer">
+            💡 Откройте эту страницу в двух окнах браузера для тестирования чата
+        </div>
+    </div>
 
-        connection.on("ReceiveMessageHistory", (messages) => {
-            console.log("История:", messages);
-            const messagesDiv = document.getElementById("messages");
-            messagesDiv.innerHTML = '';
-            messages.forEach(msg => addMessageToChat(msg.user, msg.text, msg.timestamp));
-            addMessageToChat("🤖 Система", "Добро пожаловать!", new Date());
-        });
-
-        connection.on("ReceiveMessage", (user, text, timestamp) => {
-            addMessageToChat(user, text, timestamp);
-        });
-
-        function sendMessage() {
-            const input = document.getElementById("messageInput");
-            const message = input.value.trim();
-            if (message) {
-                connection.invoke("SendMessage", "Вы", message).catch(console.error);
-                input.value = "";
+    <!-- Подключаем SignalR -->
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@6.0.0/dist/browser/signalr.min.js"></script>
+    
+    <script>
+        // Ждем полной загрузки DOM
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log("✅ DOM загружен");
+            
+            // Проверяем загрузку SignalR
+            if (typeof signalR === 'undefined') {
+                document.getElementById("status").textContent = "❌ SignalR не загружен";
+                return;
             }
-        }
 
-        function sendCommand(command) {
-            connection.invoke("SendMessage", "Вы", command).catch(console.error);
-        }
+            console.log("✅ SignalR загружен");
+            
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("/chatHub")
+                .configureLogging(signalR.LogLevel.Information)
+                .build();
 
-        function addMessageToChat(user, text, timestamp) {
-            const messagesDiv = document.getElementById("messages");
-            const messageDiv = document.createElement("div");
-            messageDiv.className = user.includes("Система") ? "message system" : "message";
-            messageDiv.innerHTML = `<strong>${user}:</strong> ${text} <small>${new Date(timestamp).toLocaleTimeString()}</small>`;
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        document.getElementById("messageInput").addEventListener("keypress", e => {
-            if (e.key === "Enter") sendMessage();
-        });
-
-        connection.start()
-            .then(() => {
-                document.getElementById("status").textContent = "✅ Подключено!";
-                document.getElementById("messageInput").disabled = false;
-                document.getElementById("sendButton").disabled = false;
-            })
-            .catch(err => {
-                document.getElementById("status").textContent = "❌ Ошибка: " + err;
+            // Когда получаем историю сообщений
+            connection.on("ReceiveMessageHistory", (messages) => {
+                console.log("Получили историю:", messages);
+                
+                const messagesDiv = document.getElementById("messages");
+                messagesDiv.innerHTML = '';
+                
+                // Показываем все сообщения из истории
+                messages.forEach(msg => {
+                    addMessageToChat(msg.user, msg.text, msg.timestamp);
+                });
+                
+                // Добавляем приветственное сообщение
+                addMessageToChat("🤖 Система", "Добро пожаловать в Connectle! Используйте кнопки модулей или напишите /помощь для списка команд.", new Date());
             });
-    }
-</script>
+
+            // Когда получаем новое сообщение
+            connection.on("ReceiveMessage", (user, text, timestamp) => {
+                addMessageToChat(user, text, timestamp);
+            });
+
+            // Функция отправки сообщения
+            function sendMessage() {
+                const input = document.getElementById("messageInput");
+                const message = input.value.trim();
+                
+                if (message) {
+                    // Отправляем сообщение на сервер
+                    connection.invoke("SendMessage", "Вы", message)
+                        .catch(err => console.error("Ошибка отправки:", err));
+                    
+                    input.value = ""; // Очищаем поле ввода
+                }
+            }
+
+            // Функция отправки команды
+            function sendCommand(command) {
+                connection.invoke("SendMessage", "Вы", command)
+                    .catch(err => console.error("Ошибка команды:", err));
+            }
+
+            // Функция добавления сообщения в чат
+            function addMessageToChat(user, text, timestamp) {
+                const messagesDiv = document.getElementById("messages");
+                const messageDiv = document.createElement("div");
+                
+                const time = new Date(timestamp).toLocaleTimeString();
+                
+                // Определяем класс сообщения
+                let messageClass = "message";
+                if (user === "🤖 Система" || user === "Система") {
+                    messageClass += " system";
+                }
+                
+                messageDiv.className = messageClass;
+                messageDiv.innerHTML = `
+                    <div class="user">${user}:</div>
+                    <div class="message-text">${text}</div>
+                    <div class="time">${time}</div>
+                `;
+                
+                messagesDiv.appendChild(messageDiv);
+                // Прокручиваем вниз
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+
+            // Назначаем обработчики событий
+            const messageInput = document.getElementById("messageInput");
+            const sendButton = document.getElementById("sendButton");
+            
+            if (messageInput && sendButton) {
+                // Отправка по Enter
+                messageInput.addEventListener("keypress", function(e) {
+                    if (e.key === "Enter") {
+                        sendMessage();
+                    }
+                });
+                
+                // Отправка по кнопке
+                sendButton.addEventListener("click", sendMessage);
+                
+                // Обработчики для кнопок модулей
+                document.querySelectorAll('.plugin-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const command = this.getAttribute('data-command');
+                        if (command) {
+                            sendCommand(command);
+                        }
+                    });
+                });
+            }
+
+            // Обновляем статус подключения
+            connection.onclose(() => {
+                document.getElementById("status").className = "status disconnected";
+                document.getElementById("status").innerHTML = "❌ Не подключено к серверу";
+                if (messageInput) messageInput.disabled = true;
+                if (sendButton) sendButton.disabled = true;
+            });
+
+            // Запускаем подключение
+            connection.start()
+                .then(() => {
+                    console.log("✅ Подключение установлено!");
+                    document.getElementById("status").className = "status connected";
+                    document.getElementById("status").innerHTML = "✅ Подключено к серверу Connectle";
+                    document.getElementById("connectionTime").textContent = new Date().toLocaleTimeString();
+                    
+                    if (messageInput) messageInput.disabled = false;
+                    if (sendButton) sendButton.disabled = false;
+                    if (messageInput) messageInput.focus();
+                })
+                .catch(err => {
+                    console.error("❌ Ошибка подключения:", err);
+                    document.getElementById("status").className = "status disconnected";
+                    document.getElementById("status").innerHTML = "❌ Ошибка подключения: " + err.message;
+                });
+        });
+    </script>
+</body>
+</html>
