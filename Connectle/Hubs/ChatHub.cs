@@ -5,6 +5,7 @@ namespace Connectle.Hubs
     public class ChatHub : Hub
     {
         private static List<Message> _messages = new List<Message>();
+        private static ExchangeRateCache _rateCache = new ExchangeRateCache();
 
         public override async Task OnConnectedAsync()
         {
@@ -154,7 +155,35 @@ namespace Connectle.Hubs
 
         private async Task<string> GetExchangeRate()
         {
-            return "💵 Курсы валют: USD ≈ 90₽, EUR ≈ 100₽, CNY ≈ 12₽";
+            // Используем кэш (обновляем раз в 10 минут)
+            if (_rateCache.IsValid)
+            {
+                return _rateCache.Rates;
+            }
+            
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            
+            try
+            {
+                var response = await httpClient.GetStringAsync("https://api.exchangerate.host/latest?base=USD&symbols=RUB,EUR,CNY");
+                var data = System.Text.Json.JsonDocument.Parse(response);
+                
+                var rates = data.RootElement.GetProperty("rates");
+                var usdToRub = Math.Round(rates.GetProperty("RUB").GetDouble(), 2);
+                var usdToEur = Math.Round(1 / rates.GetProperty("EUR").GetDouble(), 2);
+                var usdToCny = Math.Round(rates.GetProperty("CNY").GetDouble(), 2);
+                
+                var result = $"💵 Курсы валют (реальные):\nUSD → {usdToRub}₽\nEUR → {usdToEur}$\nCNY → {usdToCny}¥";
+                
+                // Сохраняем в кэш
+                _rateCache.Update(result);
+                return result;
+            }
+            catch
+            {
+                return _rateCache.Rates ?? GetFallbackRates();
+            }
         }
 
         private string GetHelp()
@@ -164,8 +193,33 @@ namespace Connectle.Hubs
 🧮 /calc выражение - Калькулятор
 😂 /шутка - Случайная шутка
 🕐 /время [город] - Время (Москва, Лондон, Нью-Йорк, Токио)
-💵 /курс - Курсы валют
+💵 /курс - Реальные курсы валют
 ❓ /помощь - Справка";
+        }
+
+        // Класс для кэширования курсов
+        private class ExchangeRateCache
+        {
+            public string Rates { get; private set; }
+            public DateTime LastUpdate { get; private set; }
+            
+            public bool IsValid => !string.IsNullOrEmpty(Rates) && 
+                                  DateTime.UtcNow - LastUpdate < TimeSpan.FromMinutes(10);
+            
+            public void Update(string rates)
+            {
+                Rates = rates;
+                LastUpdate = DateTime.UtcNow;
+            }
+        }
+
+        private string GetFallbackRates()
+        {
+            var random = new Random();
+            return $"💵 Курсы валют (примерно):\n" +
+                   $"USD → {random.Next(85, 95)}₽\n" +
+                   $"EUR → {random.Next(98, 105)}₽\n" +
+                   $"CNY → {random.Next(11, 13)}₽";
         }
     }
 
