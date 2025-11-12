@@ -97,45 +97,132 @@ namespace Connectle.Hubs
 
         private string Calculate(string[] args)
         {
-            if (args.Length < 2) return "❌ Использование: /calc 2+2";
+            if (args.Length < 2) return "❌ Использование: /calc выражение\nПример: /calc sin(pi/2) + log(100)";
+            
             try
             {
-                var expression = string.Join("", args.Skip(1));
-                var result = EvaluateMathExpression(expression);
+                var expression = string.Join(" ", args.Skip(1));
+                var result = EvaluateScientificExpression(expression);
                 return $"🧮 {expression} = {result}";
             }
-            catch
+            catch (Exception ex)
             {
-                return "❌ Ошибка в выражении";
+                return $"❌ Ошибка: {ex.Message}\n💡 Используйте: sin, cos, tan, log, ln, sqrt, pi, e, ^";
             }
         }
 
-        private double EvaluateMathExpression(string expression)
+        private double EvaluateScientificExpression(string expression)
         {
-            expression = expression.Replace(" ", "");
+            expression = expression.ToLower()
+                .Replace("pi", Math.PI.ToString())
+                .Replace("e", Math.E.ToString())
+                .Replace(" ", "")
+                .Replace(",", ".");
             
-            if (expression.Contains("+"))
+            // Обрабатываем скобки и функции
+            while (expression.Contains('(') && expression.Contains(')'))
             {
-                var parts = expression.Split('+');
-                return double.Parse(parts[0]) + double.Parse(parts[1]);
-            }
-            else if (expression.Contains("-"))
-            {
-                var parts = expression.Split('-');
-                return double.Parse(parts[0]) - double.Parse(parts[1]);
-            }
-            else if (expression.Contains("*"))
-            {
-                var parts = expression.Split('*');
-                return double.Parse(parts[0]) * double.Parse(parts[1]);
-            }
-            else if (expression.Contains("/"))
-            {
-                var parts = expression.Split('/');
-                return double.Parse(parts[0]) / double.Parse(parts[1]);
+                var openBracket = expression.LastIndexOf('(');
+                var closeBracket = expression.IndexOf(')', openBracket);
+                
+                if (closeBracket == -1) 
+                    throw new ArgumentException("Непарные скобки");
+                    
+                var innerExpression = expression.Substring(openBracket + 1, closeBracket - openBracket - 1);
+                var innerResult = EvaluateScientificExpression(innerExpression);
+                
+                // Проверяем функции перед скобками
+                var functionStart = Math.Max(0, openBracket - 4);
+                var beforeBracket = expression.Substring(functionStart, openBracket - functionStart);
+                
+                if (beforeBracket.EndsWith("sin"))
+                {
+                    innerResult = Math.Sin(innerResult);
+                    expression = expression.Substring(0, openBracket - 3) + innerResult + expression.Substring(closeBracket + 1);
+                }
+                else if (beforeBracket.EndsWith("cos"))
+                {
+                    innerResult = Math.Cos(innerResult);
+                    expression = expression.Substring(0, openBracket - 3) + innerResult + expression.Substring(closeBracket + 1);
+                }
+                else if (beforeBracket.EndsWith("tan"))
+                {
+                    innerResult = Math.Tan(innerResult);
+                    expression = expression.Substring(0, openBracket - 3) + innerResult + expression.Substring(closeBracket + 1);
+                }
+                else if (beforeBracket.EndsWith("log"))
+                {
+                    innerResult = Math.Log10(innerResult);
+                    expression = expression.Substring(0, openBracket - 3) + innerResult + expression.Substring(closeBracket + 1);
+                }
+                else if (beforeBracket.EndsWith("ln"))
+                {
+                    innerResult = Math.Log(innerResult);
+                    expression = expression.Substring(0, openBracket - 2) + innerResult + expression.Substring(closeBracket + 1);
+                }
+                else if (beforeBracket.EndsWith("sqrt"))
+                {
+                    innerResult = Math.Sqrt(innerResult);
+                    expression = expression.Substring(0, openBracket - 4) + innerResult + expression.Substring(closeBracket + 1);
+                }
+                else
+                {
+                    expression = expression.Substring(0, openBracket) + innerResult + expression.Substring(closeBracket + 1);
+                }
             }
             
-            return double.Parse(expression);
+            return EvaluateSimpleExpression(expression);
+        }
+
+        private double EvaluateSimpleExpression(string expression)
+        {
+            // Степень
+            for (int i = expression.Length - 1; i >= 0; i--)
+            {
+                if (expression[i] == '^')
+                {
+                    var left = EvaluateSimpleExpression(expression.Substring(0, i));
+                    var right = EvaluateSimpleExpression(expression.Substring(i + 1));
+                    return Math.Pow(left, right);
+                }
+            }
+            
+            // Умножение и деление
+            for (int i = expression.Length - 1; i >= 0; i--)
+            {
+                if (expression[i] == '*')
+                {
+                    var left = EvaluateSimpleExpression(expression.Substring(0, i));
+                    var right = EvaluateSimpleExpression(expression.Substring(i + 1));
+                    return left * right;
+                }
+                else if (expression[i] == '/')
+                {
+                    var left = EvaluateSimpleExpression(expression.Substring(0, i));
+                    var right = EvaluateSimpleExpression(expression.Substring(i + 1));
+                    if (right == 0) throw new ArgumentException("Деление на ноль");
+                    return left / right;
+                }
+            }
+            
+            // Сложение и вычитание
+            for (int i = expression.Length - 1; i >= 0; i--)
+            {
+                if (expression[i] == '+')
+                {
+                    var left = EvaluateSimpleExpression(expression.Substring(0, i));
+                    var right = EvaluateSimpleExpression(expression.Substring(i + 1));
+                    return left + right;
+                }
+                else if (expression[i] == '-' && i > 0)
+                {
+                    var left = EvaluateSimpleExpression(expression.Substring(0, i));
+                    var right = EvaluateSimpleExpression(expression.Substring(i + 1));
+                    return left - right;
+                }
+            }
+            
+            return double.Parse(expression, System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private string GetRandomJoke()
@@ -144,7 +231,10 @@ namespace Connectle.Hubs
             {
                 "🤖 Почему программисты путают Хэллоуин и Рождество? Oct 31 == Dec 25!",
                 "💻 Сколько программистов нужно, чтобы вкрутить лампочку? Ни одного!",
-                "🐛 Приходит программист к психологу, а тот ему: 'У вас проблемы с отладкой личности'"
+                "🐛 Приходит программист к психологу, а тот ему: 'У вас проблемы с отладкой личности'",
+                "📚 Изучаю C#. Нашел 10 ошибок в коде. 1: думал, что это легко. Остальные 9: segmentation fault",
+                "🔥 Почему Python стал таким популярным? Потому что его змея всех загипнотизировала!",
+                "💾 Что сказал один бит другому? 'Давай встретимся в середине байта!'"
             };
             var random = new Random();
             return jokes[random.Next(jokes.Length)];
@@ -182,25 +272,37 @@ namespace Connectle.Hubs
         {
             return @"📚 Доступные команды:
 🌤️ /погода [город] - Погода
-🧮 /calc выражение - Калькулятор
+🧮 /calc выражение - Научный калькулятор
 😂 /шутка - Случайная шутка
 🕐 /время [город] - Время (Москва, Лондон, Нью-Йорк, Токио)
 💵 /курс - Реальные курсы ЦБ РФ
-❓ /помощь - Справка";
+❓ /помощь - Справка
+
+🧮 Научный калькулятор:
+• Основные: +, -, *, /, ^ (степень)
+• Тригонометрия: sin(), cos(), tan()
+• Логарифмы: log() (10), ln() (e)
+• Корень: sqrt()
+• Константы: pi, e
+Примеры:
+/calc 2+3*4
+/calc sin(pi/2)
+/calc log(100) + sqrt(16)
+/calc 2^3 + cos(0)";
         }
-    }
 
-    public class Message
-    {
-        public string User { get; set; }
-        public string Text { get; set; }
-        public DateTime Timestamp { get; set; }
-
-        public Message(string user, string text, DateTime timestamp)
+        public class Message
         {
-            User = user;
-            Text = text;
-            Timestamp = timestamp;
+            public string User { get; set; }
+            public string Text { get; set; }
+            public DateTime Timestamp { get; set; }
+
+            public Message(string user, string text, DateTime timestamp)
+            {
+                User = user;
+                Text = text;
+                Timestamp = timestamp;
+            }
         }
     }
 }
