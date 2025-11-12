@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.SignalR;
+using System;
+using System.Net.Http;
+using System.Text.Json;
 
 namespace Connectle.Hubs
 {
     public class ChatHub : Hub
     {
         private static List<Message> _messages = new List<Message>();
-        private static ExchangeRateCache _rateCache = new ExchangeRateCache();
 
         public override async Task OnConnectedAsync()
         {
@@ -62,10 +64,7 @@ namespace Connectle.Hubs
             }
             catch
             {
-                var random = new Random();
-                var temperatures = new[] { "+15°C", "+20°C", "+25°C", "+18°C", "+22°C" };
-                var conditions = new[] { "☀️ Солнечно", "⛅ Облачно", "🌧️ Дождь", "❄️ Снег" };
-                return $"🌤️ Погода в {city}: {conditions[random.Next(conditions.Length)]}, {temperatures[random.Next(temperatures.Length)]}";
+                return $"🌤️ Погода в {city}: Данные временно недоступны";
             }
         }
 
@@ -145,9 +144,7 @@ namespace Connectle.Hubs
             {
                 "🤖 Почему программисты путают Хэллоуин и Рождество? Oct 31 == Dec 25!",
                 "💻 Сколько программистов нужно, чтобы вкрутить лампочку? Ни одного!",
-                "🐛 Приходит программист к психологу, а тот ему: 'У вас проблемы с отладкой личности'",
-                "📚 Изучаю C#. Нашел 10 ошибок в коде. 1: думал, что это легко. Остальные 9: segmentation fault",
-                "🔥 Почему Python стал таким популярным? Потому что его змея всех загипнотизировала!"
+                "🐛 Приходит программист к психологу, а тот ему: 'У вас проблемы с отладкой личности'"
             };
             var random = new Random();
             return jokes[random.Next(jokes.Length)];
@@ -155,34 +152,29 @@ namespace Connectle.Hubs
 
         private async Task<string> GetExchangeRate()
         {
-            // Используем кэш (обновляем раз в 10 минут)
-            if (_rateCache.IsValid)
-            {
-                return _rateCache.Rates;
-            }
-            
             using var httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromSeconds(10);
             
             try
             {
-                var response = await httpClient.GetStringAsync("https://api.exchangerate.host/latest?base=USD&symbols=RUB,EUR,CNY");
-                var data = System.Text.Json.JsonDocument.Parse(response);
+                // API Центробанка России - реальные курсы
+                var response = await httpClient.GetStringAsync("https://www.cbr-xml-daily.ru/daily_json.js");
+                var data = JsonDocument.Parse(response);
                 
-                var rates = data.RootElement.GetProperty("rates");
-                var usdToRub = Math.Round(rates.GetProperty("RUB").GetDouble(), 2);
-                var usdToEur = Math.Round(1 / rates.GetProperty("EUR").GetDouble(), 2);
-                var usdToCny = Math.Round(rates.GetProperty("CNY").GetDouble(), 2);
+                var valute = data.RootElement.GetProperty("Valute");
                 
-                var result = $"💵 Курсы валют (реальные):\nUSD → {usdToRub}₽\nEUR → {usdToEur}$\nCNY → {usdToCny}¥";
+                var usdRate = Math.Round(valute.GetProperty("USD").GetProperty("Value").GetDouble(), 2);
+                var eurRate = Math.Round(valute.GetProperty("EUR").GetProperty("Value").GetDouble(), 2);
+                var cnyRate = Math.Round(valute.GetProperty("CNY").GetProperty("Value").GetDouble(), 2);
                 
-                // Сохраняем в кэш
-                _rateCache.Update(result);
-                return result;
+                return $"💵 Курсы ЦБ РФ (реальные):\n" +
+                       $"USD → {usdRate}₽\n" +
+                       $"EUR → {eurRate}₽\n" +
+                       $"CNY → {cnyRate}₽";
             }
-            catch
+            catch (Exception ex)
             {
-                return _rateCache.Rates ?? GetFallbackRates();
+                return $"❌ Не удалось получить курсы валют\nОшибка API: {ex.Message}";
             }
         }
 
@@ -193,33 +185,8 @@ namespace Connectle.Hubs
 🧮 /calc выражение - Калькулятор
 😂 /шутка - Случайная шутка
 🕐 /время [город] - Время (Москва, Лондон, Нью-Йорк, Токио)
-💵 /курс - Реальные курсы валют
+💵 /курс - Реальные курсы ЦБ РФ
 ❓ /помощь - Справка";
-        }
-
-        // Класс для кэширования курсов
-        private class ExchangeRateCache
-        {
-            public string Rates { get; private set; }
-            public DateTime LastUpdate { get; private set; }
-            
-            public bool IsValid => !string.IsNullOrEmpty(Rates) && 
-                                  DateTime.UtcNow - LastUpdate < TimeSpan.FromMinutes(10);
-            
-            public void Update(string rates)
-            {
-                Rates = rates;
-                LastUpdate = DateTime.UtcNow;
-            }
-        }
-
-        private string GetFallbackRates()
-        {
-            var random = new Random();
-            return $"💵 Курсы валют (примерно):\n" +
-                   $"USD → {random.Next(85, 95)}₽\n" +
-                   $"EUR → {random.Next(98, 105)}₽\n" +
-                   $"CNY → {random.Next(11, 13)}₽";
         }
     }
 
