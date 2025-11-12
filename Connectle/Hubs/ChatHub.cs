@@ -1,35 +1,386 @@
 using Microsoft.AspNetCore.SignalR;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace Connectle.Hubs
 {
     public class ChatHub : Hub
     {
-        private static List<Message> _messages = new List<Message>();
+        // === СТАТИЧЕСКИЕ ДАННЫЕ ===
+        private static List<Message> _messages = new();
+        private static List<User> _users = new();
+        private static List<PrivateMessage> _privateMessages = new();
+        private static List<Contact> _contacts = new();
+        
+        // === БЛОКИРОВКИ ДЛЯ ПОТОКОБЕЗОПАСНОСТИ ===
+        private static readonly object _messagesLock = new();
+        private static readonly object _usersLock = new();
+        private static readonly object _privateMessagesLock = new();
+        private static readonly object _contactsLock = new();
 
+        // === ОБЩИЕ СООБЩЕНИЯ ===
         public override async Task OnConnectedAsync()
         {
-            await Clients.Caller.SendAsync("ReceiveMessageHistory", _messages);
+            await Clients.Caller.SendAsync("ReceiveMessageHistory", GetMessages());
             await base.OnConnectedAsync();
         }
 
         public async Task SendMessage(string user, string text)
         {
-            if (text.StartsWith("/"))
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            // Проверка аутентификации
+            var currentUser = GetUserByConnectionId(Context.ConnectionId);
+            if (currentUser == null)
             {
-                var args = text.Split(' ');
-                var result = await ExecutePluginCommand(args[0].ToLower(), args);
-                await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", result, DateTime.Now);
+                await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", 
+                    "❌ Для отправки сообщений необходимо войти в систему", DateTime.Now);
                 return;
             }
 
-            var message = new Message(user, text, DateTime.Now);
-            _messages.Add(message);
+            if (text.StartsWith("/"))
+            {
+                var args = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (args.Length > 0)
+                {
+                    var result = await ExecutePluginCommand(args[0].ToLower(), args);
+                    await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", result, DateTime.Now);
+                }
+                return;
+            }
+
+            // Ограничение длины сообщения
+            if (text.Length > 1000)
+            {
+                await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", 
+                    "❌ Сообщение слишком длинное (максимум 1000 символов)", DateTime.Now);
+                return;
+            }
+
+            var message = new Message(currentUser.Username, text, DateTime.Now);
+            
+            lock (_messagesLock)
+            {
+                _messages.Add(message);
+                // Ограничение истории сообщений
+                if (_messages.Count > 1000)
+                    _messages.RemoveAt(0);
+            }
+
             await Clients.All.SendAsync("ReceiveMessage", message.User, message.Text, message.Timestamp);
         }
 
+        // === АУТЕНТИФИКАЦИЯ ===
+        public async Task<AuthResult> Register(string username, string email, string password)
+        {
+            if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
+                return new AuthResult { Success = false, Message = "Имя пользователя должно быть не менее 3 символов" };
+
+            if (string.IsNullOrWhiteSpace(password) || password.Length < 6)
+                return new AuthResult { Success = false, Message = "Пароль должен быть не менее 6 символов" };
+
+            if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+                return new AuthResult { Success = false, Message = "Некорректный email" };
+
+            lock (_usersLock)
+            {
+                if (_users.Any(u => u.Username == username))
+                    return new AuthResult { Success = false, Message = "Имя пользователя уже занято" };
+
+                if (_users.Any(u => u.Email == email))
+                    return new AuthResult { Success = false, Message = "Email уже используется" };
+
+                var user = new User 
+                { 
+                    Id = Guid.NewGuid(),
+                    Username = username, 
+                    Email = email,
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+                    CreatedAt = DateTime.Now
+                };
+                
+                _users.Add(user);
+                return new AuthResult { Success = true, Message = "Регистрация успешна", User = user };
+            }
+        }
+
+        public async Task<AuthResult> Login(string username, string password)
+        {
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+                return new AuthResult { Success = false, Message = "Заполните все поля" };
+
+            User user;
+            lock (_usersLock)
+            {
+                user = _users.FirstOrDefault(u => u.Username == username);
+            }
+
+            if (user == null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+                return new AuthResult { Success = false, Message = "Неверный логин или пароль" };
+
+            lock (_usersLock)
+            {
+                user.IsOnline = true;
+                user.ConnectionId = Context.ConnectionId;
+                user.LastSeen = DateTime.Now;
+            }
+
+            await Clients.Caller.SendAsync("LoginSuccess", user);
+            await UpdateOnlineStatus();
+            
+            // Отправляем историю сообщений после входа
+            await Clients.Caller.SendAsync("ReceiveMessageHistory", GetMessages());
+            
+            return new AuthResult { Success = true, Message = "Вход успешен", User = user };
+        }
+
+        public async Task Logout()
+        {
+            var user = GetUserByConnectionId(Context.ConnectionId);
+            if (user != null)
+            {
+                lock (_usersLock)
+                {
+                    user.IsOnline = false;
+                    user.ConnectionId = null;
+                    user.LastSeen = DateTime.Now;
+                }
+                await UpdateOnlineStatus();
+            }
+        }
+
+        // === ЛИЧНЫЕ СООБЩЕНИЯ ===
+        public async Task SendPrivateMessage(string toUsername, string text)
+        {
+            var fromUser = GetUserByConnectionId(Context.ConnectionId);
+            if (fromUser == null)
+            {
+                await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", 
+                    "❌ Для отправки сообщений необходимо войти в систему", DateTime.Now);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(text) || text.Length > 1000)
+            {
+                await Clients.Caller.SendAsync("ReceivePrivateMessage", new
+                {
+                    FromUser = "🤖 Система",
+                    ToUser = fromUser.Username,
+                    Text = "❌ Сообщение слишком длинное или пустое",
+                    Timestamp = DateTime.Now,
+                    IsOwn = true
+                });
+                return;
+            }
+
+            User toUser;
+            lock (_usersLock)
+            {
+                toUser = _users.FirstOrDefault(u => u.Username == toUsername);
+            }
+
+            if (toUser == null)
+            {
+                await Clients.Caller.SendAsync("ReceivePrivateMessage", new
+                {
+                    FromUser = "🤖 Система",
+                    ToUser = fromUser.Username,
+                    Text = "❌ Пользователь не найден",
+                    Timestamp = DateTime.Now,
+                    IsOwn = true
+                });
+                return;
+            }
+
+            if (fromUser.Id == toUser.Id)
+            {
+                await Clients.Caller.SendAsync("ReceivePrivateMessage", new
+                {
+                    FromUser = "🤖 Система",
+                    ToUser = fromUser.Username,
+                    Text = "❌ Нельзя отправлять сообщения самому себе",
+                    Timestamp = DateTime.Now,
+                    IsOwn = true
+                });
+                return;
+            }
+
+            var message = new PrivateMessage
+            {
+                Id = Guid.NewGuid(),
+                FromUserId = fromUser.Id,
+                ToUserId = toUser.Id,
+                Text = text,
+                Timestamp = DateTime.Now,
+                IsRead = false
+            };
+
+            lock (_privateMessagesLock)
+            {
+                _privateMessages.Add(message);
+            }
+
+            // Отправляем отправителю
+            await Clients.Caller.SendAsync("ReceivePrivateMessage", new
+            {
+                FromUser = fromUser.Username,
+                ToUser = toUser.Username,
+                Text = text,
+                Timestamp = message.Timestamp,
+                IsOwn = true
+            });
+
+            // Отправляем получателю, если онлайн
+            if (toUser.IsOnline && !string.IsNullOrEmpty(toUser.ConnectionId))
+            {
+                await Clients.Client(toUser.ConnectionId).SendAsync("ReceivePrivateMessage", new
+                {
+                    FromUser = fromUser.Username,
+                    ToUser = toUser.Username,
+                    Text = text,
+                    Timestamp = message.Timestamp,
+                    IsOwn = false
+                });
+            }
+        }
+
+        public async Task<List<PrivateMessage>> GetPrivateMessageHistory(string withUsername)
+        {
+            var currentUser = GetUserByConnectionId(Context.ConnectionId);
+            if (currentUser == null) return new List<PrivateMessage>();
+
+            User withUser;
+            lock (_usersLock)
+            {
+                withUser = _users.FirstOrDefault(u => u.Username == withUsername);
+            }
+
+            if (withUser == null) return new List<PrivateMessage>();
+
+            lock (_privateMessagesLock)
+            {
+                return _privateMessages
+                    .Where(m => (m.FromUserId == currentUser.Id && m.ToUserId == withUser.Id) ||
+                               (m.FromUserId == withUser.Id && m.ToUserId == currentUser.Id))
+                    .OrderBy(m => m.Timestamp)
+                    .Take(100) // Ограничение истории
+                    .ToList();
+            }
+        }
+
+        // === КОНТАКТЫ ===
+        public async Task AddContact(string username)
+        {
+            var currentUser = GetUserByConnectionId(Context.ConnectionId);
+            if (currentUser == null) return;
+
+            User contactUser;
+            lock (_usersLock)
+            {
+                contactUser = _users.FirstOrDefault(u => u.Username == username);
+            }
+
+            if (contactUser == null)
+            {
+                await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", 
+                    "❌ Пользователь не найден", DateTime.Now);
+                return;
+            }
+
+            if (currentUser.Id == contactUser.Id)
+            {
+                await Clients.Caller.SendAsync("ReceiveMessage", "🤖 Система", 
+                    "❌ Нельзя добавить себя в контакты", DateTime.Now);
+                return;
+            }
+
+            lock (_contactsLock)
+            {
+                if (_contacts.Any(c => c.UserId == currentUser.Id && c.ContactUserId == contactUser.Id))
+                {
+                    return;
+                }
+
+                var contact = new Contact
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = currentUser.Id,
+                    ContactUserId = contactUser.Id,
+                    DisplayName = username,
+                    AddedAt = DateTime.Now
+                };
+
+                _contacts.Add(contact);
+            }
+
+            await Clients.Caller.SendAsync("ContactAdded", new
+            {
+                Username = username,
+                IsOnline = contactUser.IsOnline
+            });
+        }
+
+        public async Task<List<ContactInfo>> GetContacts()
+        {
+            var currentUser = GetUserByConnectionId(Context.ConnectionId);
+            if (currentUser == null) return new List<ContactInfo>();
+
+            List<ContactInfo> userContacts;
+            
+            lock (_contactsLock)
+            lock (_usersLock)
+            {
+                userContacts = _contacts
+                    .Where(c => c.UserId == currentUser.Id)
+                    .Select(c => new ContactInfo
+                    {
+                        Username = _users.First(u => u.Id == c.ContactUserId).Username,
+                        IsOnline = _users.First(u => u.Id == c.ContactUserId).IsOnline,
+                        LastSeen = _users.First(u => u.Id == c.ContactUserId).LastSeen
+                    })
+                    .ToList();
+            }
+
+            return userContacts;
+        }
+
+        // === ОНЛАЙН СТАТУС ===
+        private async Task UpdateOnlineStatus()
+        {
+            List<string> onlineUsers;
+            lock (_usersLock)
+            {
+                onlineUsers = _users
+                    .Where(u => u.IsOnline)
+                    .Select(u => u.Username)
+                    .ToList();
+            }
+                
+            await Clients.All.SendAsync("OnlineUsersUpdated", onlineUsers);
+        }
+
+        public override async Task OnDisconnectedAsync(Exception exception)
+        {
+            var user = GetUserByConnectionId(Context.ConnectionId);
+            if (user != null)
+            {
+                lock (_usersLock)
+                {
+                    user.IsOnline = false;
+                    user.ConnectionId = null;
+                    user.LastSeen = DateTime.Now;
+                }
+                await UpdateOnlineStatus();
+            }
+            await base.OnDisconnectedAsync(exception);
+        }
+
+        // === PLUGIN КОМАНДЫ (из первого кода) ===
         private async Task<string> ExecutePluginCommand(string command, string[] args)
         {
             try
@@ -42,6 +393,8 @@ namespace Connectle.Hubs
                     "/шутка" => GetRandomJoke(),
                     "/курс" => await GetExchangeRate(),
                     "/помощь" => GetHelp(),
+                    "/контакты" => await GetContactsCommand(),
+                    "/онлайн" => GetOnlineUsers(),
                     _ => "❌ Неизвестная команда. Напишите /помощь"
                 };
             }
@@ -51,6 +404,51 @@ namespace Connectle.Hubs
             }
         }
 
+        private async Task<string> GetContactsCommand()
+        {
+            var contacts = await GetContacts();
+            if (!contacts.Any())
+                return "📇 У вас нет контактов. Добавьте их командой /добавить [имя]";
+
+            return "📇 Ваши контакты:\n" + string.Join("\n", 
+                contacts.Select(c => $"{c.Username} {(c.IsOnline ? "🟢" : "⚫")}"));
+        }
+
+        private string GetOnlineUsers()
+        {
+            List<string> onlineUsers;
+            lock (_usersLock)
+            {
+                onlineUsers = _users
+                    .Where(u => u.IsOnline)
+                    .Select(u => u.Username)
+                    .ToList();
+            }
+
+            if (!onlineUsers.Any())
+                return "👥 В сети никого нет";
+
+            return "👥 Пользователи онлайн:\n" + string.Join("\n", onlineUsers);
+        }
+
+        // === ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ===
+        private User GetUserByConnectionId(string connectionId)
+        {
+            lock (_usersLock)
+            {
+                return _users.FirstOrDefault(u => u.ConnectionId == connectionId);
+            }
+        }
+
+        private List<Message> GetMessages()
+        {
+            lock (_messagesLock)
+            {
+                return _messages.ToList();
+            }
+        }
+
+        // === МЕТОДЫ ПЛАГИНОВ (из первого кода) ===
         private async Task<string> GetRealWeather(string[] args)
         {
             var city = args.Length > 1 ? args[1] : "Moscow";
@@ -247,7 +645,6 @@ namespace Connectle.Hubs
             
             try
             {
-                // API Центробанка России - реальные курсы
                 var response = await httpClient.GetStringAsync("https://www.cbr-xml-daily.ru/daily_json.js");
                 var data = JsonDocument.Parse(response);
                 
@@ -271,11 +668,18 @@ namespace Connectle.Hubs
         private string GetHelp()
         {
             return @"📚 Доступные команды:
+
+🌐 ОБЩИЕ:
 🌤️ /погода [город] - Погода
 🧮 /calc выражение - Научный калькулятор
 😂 /шутка - Случайная шутка
 🕐 /время [город] - Время (Москва, Лондон, Нью-Йорк, Токио)
 💵 /курс - Реальные курсы ЦБ РФ
+
+👥 СОЦИАЛЬНЫЕ:
+/контакты - Мои контакты
+/онлайн - Кто онлайн
+/добавить [имя] - Добавить в контакты
 ❓ /помощь - Справка
 
 🧮 Научный калькулятор:
@@ -291,6 +695,7 @@ namespace Connectle.Hubs
 /calc 2^3 + cos(0)";
         }
 
+        // === МОДЕЛИ ДАННЫХ ===
         public class Message
         {
             public string User { get; set; }
@@ -303,6 +708,51 @@ namespace Connectle.Hubs
                 Text = text;
                 Timestamp = timestamp;
             }
+        }
+
+        public class User
+        {
+            public Guid Id { get; set; }
+            public string Username { get; set; }
+            public string Email { get; set; }
+            public string PasswordHash { get; set; }
+            public string ConnectionId { get; set; }
+            public bool IsOnline { get; set; }
+            public DateTime CreatedAt { get; set; }
+            public DateTime LastSeen { get; set; }
+        }
+
+        public class PrivateMessage
+        {
+            public Guid Id { get; set; }
+            public Guid FromUserId { get; set; }
+            public Guid ToUserId { get; set; }
+            public string Text { get; set; }
+            public DateTime Timestamp { get; set; }
+            public bool IsRead { get; set; }
+        }
+
+        public class Contact
+        {
+            public Guid Id { get; set; }
+            public Guid UserId { get; set; }
+            public Guid ContactUserId { get; set; }
+            public string DisplayName { get; set; }
+            public DateTime AddedAt { get; set; }
+        }
+
+        public class AuthResult
+        {
+            public bool Success { get; set; }
+            public string Message { get; set; }
+            public User User { get; set; }
+        }
+
+        public class ContactInfo
+        {
+            public string Username { get; set; }
+            public bool IsOnline { get; set; }
+            public DateTime LastSeen { get; set; }
         }
     }
 }
